@@ -1,0 +1,23 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group 'com.uddernetworks.newocrwebsite.updater'
+version '1.0'
+
+sourceCompatibility = 11
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    compile 'org.jsoup:jsoup:1.10.2'
+
+    compile fileTree(dir: 'libs', include: '*.jar')
+}
+
+application {
+    mainClassName = 'com.uddernetworks.newocrwebsite.analyzer.Analyze'
+}
