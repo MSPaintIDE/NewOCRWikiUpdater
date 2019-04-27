@@ -10,11 +10,12 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.*;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public class Analyze {
 
-    private static final boolean USE_COOKIES = false;
+    private static final boolean USE_COOKIES = true;
 
     private Map<String, ChromeDriver> documentHashCache = new HashMap<>();
     private Map<String, Map<String, String>> funkyHashCache = new HashMap<>();
@@ -50,12 +51,16 @@ public class Analyze {
                 select.forEach(element -> {
                     try {
                         var dataGH = element.attr("data-gh");
-                        var withoutLines = dataGH.substring(0, dataGH.indexOf('#'));
-                        var permHash = dataGH.substring(40, 80);
-                        var filePath = dataGH.substring(81, dataGH.lastIndexOf('#'));
-                        var index = dataGH.lastIndexOf('-');
-                        var lineStart = dataGH.substring(dataGH.lastIndexOf('#') + 2, index == -1 ? dataGH.length() : index);
-                        var lineEnd = index == -1 ? lineStart : dataGH.substring(index + 2);
+                        if (dataGH.startsWith("<") && dataGH.endsWith(">")) dataGH = dataGH.substring(1, dataGH.length() - 1);
+
+                        var parts = getURLParts(dataGH);
+                        var permHash = parts[0].orElse("undefined");
+                        var filePath = parts[1].orElse("undefined");
+                        var withoutLines = parts[2].orElse("undefined");
+                        var lineStart = parts[3].orElse("undefined");
+                        var lineEnd = parts[4].orElse("undefined");
+
+                        if (permHash.equals(newHash)) return;
 
                         String funkyHash = getFunkyHash(filePath, permHash, newHash);
 
@@ -119,6 +124,38 @@ public class Analyze {
                 e.printStackTrace();
             }
         });
+    }
+
+    /**
+     * Separates the URl from its different parts. This method was very lazily written, so if anyone sees this, make an
+     * issue or something saying I should make this better.
+     *
+     * @param URL The input URL
+     * @return hash, path, without lines, first num, second num
+     */
+    private Optional<String>[] getURLParts(String URL) {
+        var hashFromURL = Pattern.compile("([a-z0-9]{40})");
+
+        var permHashMatch = hashFromURL.matcher(URL);
+        var one = permHashMatch.find() ? permHashMatch.group() : null; //     7aa211108c8da4d7900b4e89442b1a003dfe1c3e
+
+        var otherPattern = Pattern.compile("[a-z0-9]{40}/(.*)#");
+        var matcher = otherPattern.matcher(URL);
+        var two = matcher.find() ? matcher.group(1) : null; //     /src/main/java/com/uddernetworks/newocr/recognition/OCRActions.java
+
+        var firstNumPattern = Pattern.compile("(^.*?)#|$");
+        var matcher2 = firstNumPattern.matcher(URL);
+        var three = matcher2.find() ? matcher2.group(1) : null;
+
+        var secondNumPattern = Pattern.compile("[a-z0-9]{40}.*#L(\\d*)");
+        var matcher3 = secondNumPattern.matcher(URL);
+        var four = matcher3.find() ? matcher3.group(1) : null;
+
+        var thirdNumPattern = Pattern.compile("[a-z0-9]{40}.*#L\\d*-L(\\d*)");
+        var matcher4 = thirdNumPattern.matcher(URL);
+        var five = matcher4.find() ? matcher4.group(1) : null;
+
+        return new Optional[] {Optional.ofNullable(one), Optional.ofNullable(two), Optional.ofNullable(three), Optional.ofNullable(four), Optional.ofNullable(five)};
     }
 
     private String getFunkyHash(String file, String fromHash, String toHash) throws InterruptedException {
