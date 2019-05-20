@@ -4,6 +4,7 @@ import org.apache.commons.io.FileUtils;
 import org.jsoup.Jsoup;
 import org.openqa.selenium.Cookie;
 import org.openqa.selenium.chrome.ChromeDriver;
+import org.openqa.selenium.chrome.ChromeOptions;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -19,6 +20,7 @@ public class Analyze {
 
     private Map<String, ChromeDriver> documentHashCache = new HashMap<>();
     private Map<String, Map<String, String>> funkyHashCache = new HashMap<>();
+    private Scanner scanner;
 
     public static void main(String[] args) {
         new Analyze().run(args);
@@ -43,23 +45,25 @@ public class Analyze {
 
         var changeMap = new ArrayList<LineData>();
 
+        scanner = new Scanner(System.in);
+
         markdownFiles.forEach(file -> {
             try {
                 var parsed = Jsoup.parse(file, "UTF-8");
                 var select = parsed.select("src");
 
                 select.forEach(element -> {
+                    var dataGH = element.attr("data-gh");
+                    if (dataGH.startsWith("<") && dataGH.endsWith(">")) dataGH = dataGH.substring(1, dataGH.length() - 1);
+
+                    var parts = getURLParts(dataGH);
+                    var permHash = parts[0].orElse("undefined");
+                    var filePath = parts[1].orElse("undefined");
+                    var withoutLines = parts[2].orElse("undefined");
+                    var lineStart = parts[3].orElse("undefined");
+                    var lineEnd = parts[4].orElse("undefined");
+
                     try {
-                        var dataGH = element.attr("data-gh");
-                        if (dataGH.startsWith("<") && dataGH.endsWith(">")) dataGH = dataGH.substring(1, dataGH.length() - 1);
-
-                        var parts = getURLParts(dataGH);
-                        var permHash = parts[0].orElse("undefined");
-                        var filePath = parts[1].orElse("undefined");
-                        var withoutLines = parts[2].orElse("undefined");
-                        var lineStart = parts[3].orElse("undefined");
-                        var lineEnd = parts[4].orElse("undefined");
-
                         if (permHash.equals(newHash)) return;
 
                         String funkyHash = getFunkyHash(filePath, permHash, newHash);
@@ -74,10 +78,10 @@ public class Analyze {
                         var secondEnabled = !lineStart.equals(lineEnd);
 
                         var siblingsStart = doc.findElementsByCssSelector("td[id=\"diff-" + funkyHash + "L" + lineStart + "\"] + * + td");
-                        if (siblingsStart.isEmpty()) return;
+                        if (siblingsStart.isEmpty()) throw new IOException();
 
                         var siblingsEnd = doc.findElementsByCssSelector("td[id=\"diff-" + funkyHash + "L" + lineEnd + "\"] + * + td");
-                        if (siblingsEnd.isEmpty() && secondEnabled) return;
+                        if (siblingsEnd.isEmpty() && secondEnabled) throw new IOException();
                         var start = siblingsStart.get(0);
                         var end = siblingsEnd.get(0);
 
@@ -88,8 +92,7 @@ public class Analyze {
                         var secondOffset = newEnd - Integer.parseInt(lineEnd);
 
                         if (secondEnabled && firstOffset != secondOffset) {
-                            System.out.println("First offset does not equal second offset, this means the code has been modified and must be done manually.");
-                            changeMap.add(new LineData(file, dataGH, true));
+                            changeMap.add(new LineData(file, dataGH, waitForLink(dataGH, permHash, newHash)));
                             return;
                         }
 
@@ -97,8 +100,8 @@ public class Analyze {
                         if (secondEnabled) lines += "-L" + newEnd;
                         System.out.println("Changing lines from " + lineStart + "-" + lineEnd + " to " + newStart + "-" + newEnd);
                         changeMap.add(new LineData(file, dataGH, withoutLines.replace(permHash, newHash) + lines));
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
+                    } catch (Exception e) {
+                        changeMap.add(new LineData(file, dataGH, waitForLink(dataGH, permHash, newHash)));
                     }
                 });
             } catch (IOException e) {
@@ -124,6 +127,13 @@ public class Analyze {
                 e.printStackTrace();
             }
         });
+    }
+
+    private String waitForLink(String preLink, String oldHash, String newHash) {
+        System.out.println("The following code snippet requires manual input.");
+        System.out.println("Original: " + preLink);
+        System.out.println("With new: " + preLink.replace(oldHash, newHash) + "\n");
+        return scanner.nextLine().trim();
     }
 
     /**
@@ -166,7 +176,7 @@ public class Analyze {
         if (this.funkyHashCache.containsKey(fromHash)) return this.funkyHashCache.get(fromHash);
         var map = new HashMap<String, String>();
 
-        var driver = new ChromeDriver();
+        var driver = new ChromeDriver(new ChromeOptions().setHeadless(true));
         if (USE_COOKIES) {
             driver.get("https://github.com/");
             loadCookies(driver);
